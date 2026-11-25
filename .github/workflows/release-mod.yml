@@ -1,0 +1,227 @@
+# Reusable workflow: package a KSP mod, and (on release) publish it here.
+#
+# Callers keep their CKAN metadata in a template file (default: ckan/metadata.json).
+# The template has everything except the per-release fields, which this workflow fills in:
+#   version, download, download_size, download_hash, release_date
+#
+# Called on every push with publish: false, it packages the zip, validates the .ckan
+# against the CKAN schema and uploads both as an artifact (a dry run).
+# Called from a v*.*.* tag with publish: true, it also creates the GitHub release and
+# commits <identifier>-<version>.ckan to this repo.
+#
+# Caller example:
+#   jobs:
+#     release:
+#       permissions: { contents: write }
+#       uses: MinmusMachineWorks/KSP-Mods-CKAN/.github/workflows/release-mod.yml@main
+#       with:
+#         package-dir: FOR_RELEASE
+#         publish: ${{ startsWith(github.ref, 'refs/tags/v') }}
+#       secrets: inherit
+#
+# Publishing needs the org secret CKAN_META_TOKEN (fine-grained PAT, Contents read/write
+# on this repo only).
+
+name: Release mod
+
+on:
+  workflow_call:
+    inputs:
+      package-dir:
+        description: Directory the zip is built from (it should contain GameData/).
+        type: string
+        required: true
+      include:
+        description: >-
+          Space-separated paths inside package-dir to put in the zip. Defaults to GameData,
+          so extras like LegacyParts/ don't ship (and can't make a CKAN "find" ambiguous).
+        type: string
+        default: GameData
+      metadata:
+        description: Path to the CKAN metadata template in the caller repo.
+        type: string
+        default: ckan/metadata.json
+      build-artifact:
+        description: >-
+          Optional. Name of an artifact from an earlier job in the caller's workflow
+          (e.g. compiled DLLs) that is extracted into package-dir before zipping.
+        type: string
+        default: ''
+      publish:
+        description: Create the GitHub release and commit the .ckan file. Needs a v*.*.* tag.
+        type: boolean
+        default: false
+    secrets:
+      CKAN_META_TOKEN:
+        required: false
+
+env:
+  META_REPO: MinmusMachineWorks/KSP-Mods-CKAN
+  # Pinned so validation doesn't change under us. Bump deliberately.
+  CKAN_SCHEMA_URL: https://raw.githubusercontent.com/KSP-CKAN/CKAN/v1.36.4/CKAN.schema
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifact
+        if: inputs.build-artifact != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.build-artifact }}
+          path: ${{ inputs.package-dir }}
+
+      - name: Work out version
+        id: version
+        run: |
+          IDENTIFIER=$(jq -r .identifier "${{ inputs.metadata }}")
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="$GITHUB_REF_NAME"
+          elif [[ "${{ inputs.publish }}" == "true" ]]; then
+            echo "::error::publish: true needs a v*.*.* tag (got $GITHUB_REF)"; exit 1
+          else
+            # Dry run: a placeholder version that sorts below any real release.
+            TAG="v0.0.0-dev.${GITHUB_RUN_NUMBER}"
+          fi
+          VERSION="${TAG#v}"
+          echo "identifier=$IDENTIFIER" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"               >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"       >> "$GITHUB_OUTPUT"
+          echo "zip=${IDENTIFIER}-${TAG}.zip" >> "$GITHUB_OUTPUT"
+
+      # KSP-AVC .version files: point them at this fork's releases and stamp the version,
+      # so in-game update checks follow our releases rather than upstream's.
+      - name: Stamp .version files
+        id: avc
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY#*/}"
+          mkdir -p "$RUNNER_TEMP/avc"
+          # MAJOR.MINOR.PATCH[.BUILD]; dev versions keep only the numeric part.
+          IFS=. read -r MAJ MIN PAT BLD <<<"${VERSION%%-*}"
+          cd "${{ inputs.package-dir }}"
+          # shellcheck disable=SC2086  # include is a deliberate space-separated list
+          find ${{ inputs.include }} -name '*.version' -print0 | while IFS= read -r -d '' f; do
+            name=$(basename "$f")
+            jq --arg url "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/$name" \
+               --arg dl  "https://github.com/$GITHUB_REPOSITORY/releases/latest" \
+               --arg owner "$OWNER" --arg repo "$REPO" \
+               --argjson maj "${MAJ:-0}" --argjson min "${MIN:-0}" \
+               --argjson pat "${PAT:-0}" --argjson bld "${BLD:-0}" \
+               '.URL = $url | .DOWNLOAD = $dl
+                | (if has("GITHUB") then .GITHUB.USERNAME = $owner | .GITHUB.REPOSITORY = $repo else . end)
+                | .VERSION = {MAJOR: $maj, MINOR: $min, PATCH: $pat, BUILD: $bld}' \
+               "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+            cp "$f" "$RUNNER_TEMP/avc/$name"
+            echo "stamped $f"
+          done
+
+      - name: Package zip
+        id: zip
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          ZIP_PATH="$RUNNER_TEMP/out/${{ steps.version.outputs.zip }}"
+          # shellcheck disable=SC2086
+          (cd "${{ inputs.package-dir }}" && zip -qr -X "$ZIP_PATH" ${{ inputs.include }} -x '*.DS_Store')
+          # CKAN compares download_hash against uppercase hex; sha256sum prints lowercase.
+          echo "path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$ZIP_PATH" | cut -d' ' -f1 | tr a-f A-F)" >> "$GITHUB_OUTPUT"
+          echo "size=$(stat -c%s "$ZIP_PATH")" >> "$GITHUB_OUTPUT"
+          unzip -l "$ZIP_PATH" | tail -1
+
+      - name: Generate .ckan
+        id: ckan
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          ZIP: ${{ steps.version.outputs.zip }}
+          SHA256: ${{ steps.zip.outputs.sha256 }}
+          SIZE: ${{ steps.zip.outputs.size }}
+        run: |
+          OUT="$RUNNER_TEMP/out/${{ steps.version.outputs.identifier }}-${VERSION}.ckan"
+          jq --arg version "$VERSION" \
+             --arg download "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ZIP" \
+             --argjson size "$SIZE" --arg sha "$SHA256" \
+             --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+             '. + {version: $version, download: $download, download_size: $size,
+                   download_hash: {sha256: $sha}, release_date: $date}' \
+             "${{ inputs.metadata }}" > "$OUT"
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+          cat "$OUT"
+
+      - name: Validate .ckan against the CKAN schema
+        run: |
+          curl -sfL "$CKAN_SCHEMA_URL" -o "$RUNNER_TEMP/CKAN.schema"
+          pipx run check-jsonschema --schemafile "$RUNNER_TEMP/CKAN.schema" "${{ steps.ckan.outputs.path }}"
+
+      - name: Check install stanzas match the zip
+        env:
+          ZIP_PATH: ${{ steps.zip.outputs.path }}
+        run: |
+          # Every "find"/"file" in the metadata must exist in the zip, or CKAN fails at install time.
+          entries=$(unzip -Z1 "$ZIP_PATH")
+          jq -r '.install[] | (.find // .file)' "${{ steps.ckan.outputs.path }}" | while read -r target; do
+            if grep -qE "(^|/)${target}(/|$)" <<<"$entries"; then
+              echo "ok: $target"
+            else
+              echo "::error::install target '$target' not found in zip"; exit 1
+            fi
+          done
+
+      - name: Upload package (dry run)
+        if: ${{ !inputs.publish }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.identifier }}-package
+          path: |
+            ${{ steps.zip.outputs.path }}
+            ${{ steps.ckan.outputs.path }}
+          retention-days: 14
+
+      - name: Create GitHub release
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          IDENTIFIER: ${{ steps.version.outputs.identifier }}
+        run: |
+          NAME=$(jq -r .name "${{ inputs.metadata }}")
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          ## Installation
+          Install via CKAN: add the [Minmus Machine Works repository](https://github.com/$META_REPO)
+          (\`ckan repo add MinmusMachineWorks https://github.com/$META_REPO/archive/main.tar.gz\`),
+          then install \`$IDENTIFIER\`.
+          Or unzip into your KSP folder so its \`GameData/\` merges with yours.
+          EOF
+          gh release create "$TAG" --verify-tag --title "$NAME $TAG" --notes-file "$RUNNER_TEMP/notes.md" \
+            "${{ steps.zip.outputs.path }}" "$RUNNER_TEMP"/avc/*
+
+      - name: Publish .ckan to the meta repo
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.CKAN_META_TOKEN }}
+          CKAN_PATH: ${{ steps.ckan.outputs.path }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::CKAN_META_TOKEN is not available. Set it as an org secret and call this workflow with 'secrets: inherit'."; exit 1
+          fi
+          git clone -q "https://x-access-token:${GH_TOKEN}@github.com/$META_REPO.git" "$RUNNER_TEMP/meta"
+          cd "$RUNNER_TEMP/meta"
+          FILE=$(basename "$CKAN_PATH")
+          if [ -e "$FILE" ]; then
+            echo "::error::$FILE already exists in $META_REPO. Bump the version tag."; exit 1
+          fi
+          cp "$CKAN_PATH" "$FILE"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$FILE"
+          git commit -qm "Add ${FILE%.ckan} (from $GITHUB_REPOSITORY)"
+          # Several mods can release at once; the files never overlap, so rebase-and-retry is safe.
+          for i in 1 2 3 4 5; do
+            git push -q && exit 0
+            sleep $((i * 3)); git pull -q --rebase
+          done
+          echo "::error::could not push to $META_REPO"; exit 1
