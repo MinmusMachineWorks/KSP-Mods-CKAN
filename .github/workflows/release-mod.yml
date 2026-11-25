@@ -7,7 +7,7 @@
 # Called on every push with publish: false, it packages the zip, validates the .ckan
 # against the CKAN schema and uploads both as an artifact (a dry run).
 # Called from a v*.*.* tag with publish: true, it also creates the GitHub release and
-# commits <identifier>-<version>.ckan to this repo.
+# commits <identifier>/<identifier>-<version>.ckan to this repo.
 #
 # Caller example:
 #   jobs:
@@ -214,21 +214,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.CKAN_META_TOKEN }}
           CKAN_PATH: ${{ steps.ckan.outputs.path }}
+          IDENTIFIER: ${{ steps.version.outputs.identifier }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "::error::CKAN_META_TOKEN is not available. Set it as an org secret and call this workflow with 'secrets: inherit'."; exit 1
           fi
           git clone -q "https://x-access-token:${GH_TOKEN}@github.com/$META_REPO.git" "$RUNNER_TEMP/meta"
           cd "$RUNNER_TEMP/meta"
-          FILE=$(basename "$CKAN_PATH")
+          # One folder per mod: <identifier>/<identifier>-<version>.ckan (the CKAN client reads
+          # every *.ckan in the archive regardless of folder; this just keeps the repo browsable).
+          FILE="$IDENTIFIER/$(basename "$CKAN_PATH")"
           if [ -e "$FILE" ]; then
             echo "::error::$FILE already exists in $META_REPO. Bump the version tag."; exit 1
           fi
+          mkdir -p "$IDENTIFIER"
           cp "$CKAN_PATH" "$FILE"
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "$FILE"
-          git commit -qm "Add ${FILE%.ckan} (from $GITHUB_REPOSITORY)"
+          git commit -qm "Add $(basename "${FILE%.ckan}") (from $GITHUB_REPOSITORY)"
           # Several mods can release at once; the files never overlap, so rebase-and-retry is safe.
           for i in 1 2 3 4 5; do
             git push -q && exit 0

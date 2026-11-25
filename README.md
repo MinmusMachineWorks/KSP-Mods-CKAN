@@ -12,5 +12,9 @@ Then install any mod listed here with `ckan install <identifier>`.
 
 ## Mods
 
-Each `<identifier>-<version>.ckan` file in this repo is one release of one mod. The files are
-committed automatically by each mod's release workflow.
+Each mod has a folder named after its CKAN identifier, and each `<identifier>-<version>.ckan`
+file in it is one release. The files are committed automatically by each mod's release workflow
+(most use `.github/workflows/release-mod.yml` here).
+
+The CKAN client reads every `*.ckan` file in the repository archive, whatever folder it is in, so
+the folders are only for browsing.
