@@ -8,7 +8,7 @@
   "version":      "0.1.0",
   "ksp_version_min": "1.8",
   "ksp_version_max": "1.12.5",
-  "download":      "https://github.com/Machine-Maker/MechJebRTBridge/releases/download/v0.1.0/MechJebRTBridge-v0.1.0.zip",
+  "download":      "https://github.com/MinmusMachineWorks/MechJebRTBridge/releases/download/v0.1.0/MechJebRTBridge-v0.1.0.zip",
   "download_size": 17324,
   "download_hash": { "sha256": "CB8CA179B1178187D86DD4E614B94A3F926855A1AB36EB4FE20D3C93E6AC08F4" },
   "depends": [
