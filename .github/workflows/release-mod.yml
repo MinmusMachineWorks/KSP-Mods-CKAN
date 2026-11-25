@@ -189,7 +189,13 @@ jobs:
           IDENTIFIER: ${{ steps.version.outputs.identifier }}
         run: |
           NAME=$(jq -r .name "${{ inputs.metadata }}")
-          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          # An annotated tag's message becomes the top of the release notes (what changed).
+          git fetch -q --depth=1 origin "+refs/tags/$TAG:refs/tags/$TAG"
+          if [ "$(git cat-file -t "$TAG")" = "tag" ]; then
+            git tag -l --format='%(contents)' "$TAG" > "$RUNNER_TEMP/notes.md"
+            echo >> "$RUNNER_TEMP/notes.md"
+          fi
+          cat >> "$RUNNER_TEMP/notes.md" <<EOF
           ## Installation
           Install via CKAN: add the [Minmus Machine Works repository](https://github.com/$META_REPO)
           (\`ckan repo add MinmusMachineWorks https://github.com/$META_REPO/archive/main.tar.gz\`),
