@@ -190,9 +190,13 @@ jobs:
         run: |
           NAME=$(jq -r .name "${{ inputs.metadata }}")
           # An annotated tag's message becomes the top of the release notes (what changed).
+          # Signed tags carry a PGP/SSH signature block after the message; drop it.
+          # Note: `git tag -m` strips lines starting with '#', so write headings in the
+          # tag message only with `git tag --cleanup=verbatim`.
           git fetch -q --depth=1 origin "+refs/tags/$TAG:refs/tags/$TAG"
           if [ "$(git cat-file -t "$TAG")" = "tag" ]; then
-            git tag -l --format='%(contents)' "$TAG" > "$RUNNER_TEMP/notes.md"
+            git tag -l --format='%(contents)' "$TAG" \
+              | sed '/^-----BEGIN [A-Z ]*SIGNATURE-----$/,$d' > "$RUNNER_TEMP/notes.md"
             echo >> "$RUNNER_TEMP/notes.md"
           fi
           cat >> "$RUNNER_TEMP/notes.md" <<EOF
