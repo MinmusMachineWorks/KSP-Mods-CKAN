@@ -1,0 +1,65 @@
+{
+  "spec_version": "v1.4",
+  "identifier": "USI-LS-MM",
+  "name": "USI Life Support (MMW)",
+  "abstract": "UmbraSpaceIndustries take on life support, with community fixes",
+  "description": "Minmus Machine Works fork of https://github.com/UmbraSpaceIndustries/USI-LS with community fixes. It replaces the official USI-LS package (provides and conflicts with it), so mods that depend on USI-LS still install.",
+  "author": [
+    "RoverDude",
+    "Machine-Maker"
+  ],
+  "license": "restricted",
+  "release_status": "stable",
+  "ksp_version_min": "1.8",
+  "ksp_version_max": "1.12.99",
+  "resources": {
+    "homepage": "https://github.com/MinmusMachineWorks/USI-LS",
+    "repository": "https://github.com/MinmusMachineWorks/USI-LS",
+    "x_upstream": "https://github.com/UmbraSpaceIndustries/USI-LS"
+  },
+  "provides": [
+    "USI-LS"
+  ],
+  "conflicts": [
+    {
+      "name": "USI-LS"
+    },
+    {
+      "name": "SETI-CommunityTechTree"
+    },
+    {
+      "name": "TACLS"
+    }
+  ],
+  "depends": [
+    {
+      "name": "ModuleManager",
+      "min_version": "2.8.0"
+    },
+    {
+      "name": "USITools",
+      "min_version": "0.9.0.0"
+    },
+    {
+      "name": "CommunityResourcePack",
+      "min_version": "0.7.0.0"
+    },
+    {
+      "name": "CommunityCategoryKit",
+      "min_version": "2.0.0.0"
+    }
+  ],
+  "install": [
+    {
+      "find": "UmbraSpaceIndustries/LifeSupport",
+      "install_to": "GameData/UmbraSpaceIndustries"
+    }
+  ],
+  "version": "112.0.1.1",
+  "download": "https://github.com/MinmusMachineWorks/USI-LS/releases/download/v112.0.1.1/USI-LS-MM-v112.0.1.1.zip",
+  "download_size": 3908016,
+  "download_hash": {
+    "sha256": "62906FCDB7CF4C9F4160F64879AA84B0282C7550C7788E53502B1ADFCF7D18A9"
+  },
+  "release_date": "2026-11-25T06:02:30Z"
+}
